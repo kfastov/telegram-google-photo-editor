@@ -84,7 +84,7 @@ function getConversationId(msg) {
   const userId = msg.from.id;
   
   // Check if this is a reply to a previous message
-  if (msg.reply_to_message && msg.reply_to_message.from.id === bot.me.id) {
+  if (msg.reply_to_message && bot.me && msg.reply_to_message.from.id === bot.me.id) {
     const repliedMsgId = msg.reply_to_message.message_id;
     // If we have this message ID mapped to a conversation, use that conversation
     if (messageToConversation[repliedMsgId]) {

@@ -227,14 +227,14 @@ bot.on('photo', async (msg) => {
     
     // Send the text response
     if (text) {
-      const sentMsg = await bot.sendMessage(chatId, text);
+      const sentMsg = await bot.sendMessage(chatId, text, { reply_to_message_id: msg.message_id });
       // Store this message ID with its conversation
       messageToConversation[sentMsg.message_id] = resultConvId;
     }
     
     // Send any images that were generated
     for (const imagePath of imagePaths) {
-      const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath));
+      const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), { reply_to_message_id: msg.message_id });
       // Store this message ID with its conversation
       messageToConversation[sentPhoto.message_id] = resultConvId;
       // Clean up the response image after sending
@@ -245,7 +245,7 @@ bot.on('photo', async (msg) => {
     fs.unlinkSync(filePath);
   } catch (error) {
     console.error('Error processing photo:', error);
-    bot.sendMessage(chatId, "Sorry, I couldn't process that image.");
+    bot.sendMessage(chatId, "Sorry, I couldn't process that image.", { reply_to_message_id: msg.message_id });
   }
 });
 
@@ -273,14 +273,14 @@ bot.on('message', async (msg) => {
       
       // Send the text response
       if (text) {
-        const sentMsg = await bot.sendMessage(chatId, text);
+        const sentMsg = await bot.sendMessage(chatId, text, { reply_to_message_id: msg.message_id });
         // Store this message ID with its conversation
         messageToConversation[sentMsg.message_id] = resultConvId;
       }
       
       // Send any images that were generated
       for (const imagePath of imagePaths) {
-        const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath));
+        const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), { reply_to_message_id: msg.message_id });
         // Store this message ID with its conversation
         messageToConversation[sentPhoto.message_id] = resultConvId;
         // Clean up the response image after sending
@@ -288,7 +288,7 @@ bot.on('message', async (msg) => {
       }
     } catch (error) {
       console.error('Error processing message:', error);
-      bot.sendMessage(chatId, "Sorry, I couldn't process your message.");
+      bot.sendMessage(chatId, "Sorry, I couldn't process your message.", { reply_to_message_id: msg.message_id });
     }
   }
 });

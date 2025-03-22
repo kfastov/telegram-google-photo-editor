@@ -1,0 +1,26 @@
+{
+  "name": "telegram-google-photo-editor",
+  "version": "1.0.0",
+  "description": "A Telegram bot powered by Google's Gemini 2.0 Flash Experimental AI model for photo editing and generation",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "gemini",
+    "google-ai",
+    "image-editing",
+    "photo-editor",
+    "ai",
+    "chat-bot",
+    "image-generation"
+  ],
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "axios": "^1.8.4",
+    "dotenv": "^16.0.3",
+    "node-telegram-bot-api": "^0.61.0"
+  }
+}

@@ -37,6 +37,9 @@ const chatHistory = {};
 // Store message IDs to their conversations
 const messageToConversation = {};
 
+// Store original prompts and images for regeneration
+const messageInputs = {};
+
 // Function to download file from Telegram
 async function downloadFile(fileId) {
   try {
@@ -202,6 +205,91 @@ bot.onText(/\/reset/, (msg) => {
   bot.sendMessage(chatId, "Chat history has been reset. We're starting a fresh conversation!");
 });
 
+// Handle callback queries (for regenerate button)
+bot.on('callback_query', async (callbackQuery) => {
+  const data = callbackQuery.data;
+  const messageId = callbackQuery.message.message_id;
+  const chatId = callbackQuery.message.chat.id;
+  
+  if (data.startsWith('regenerate_')) {
+    // Answer the callback query immediately to prevent timeout
+    await bot.answerCallbackQuery(callbackQuery.id, { text: "Regenerating response..." });
+    
+    // Show typing indicator
+    bot.sendChatAction(chatId, 'typing');
+    
+    // Parse the data to get input info
+    const inputId = data.split('_')[1];
+    
+    if (messageInputs[inputId]) {
+      const { prompt, imagePath, conversationId } = messageInputs[inputId];
+      
+      try {
+        // Generate new AI response with the same input
+        const { text, imagePaths } = await generateAIResponse(conversationId, prompt, imagePath);
+        
+        // If the original response was a text message
+        if (callbackQuery.message.text) {
+          // Edit the original message with new text
+          await bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+            }
+          });
+        } 
+        // If the original response was a photo and we have a new photo
+        else if (callbackQuery.message.photo && imagePaths.length > 0) {
+          // Delete the old message and send a new one
+          await bot.deleteMessage(chatId, messageId);
+          
+          if (text) {
+            // Send text response first
+            const sentMsg = await bot.sendMessage(chatId, text, {
+              reply_markup: {
+                inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+              }
+            });
+            messageToConversation[sentMsg.message_id] = conversationId;
+          }
+          
+          // Send new photo(s)
+          for (const imagePath of imagePaths) {
+            const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), {
+              reply_markup: {
+                inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+              }
+            });
+            messageToConversation[sentPhoto.message_id] = conversationId;
+            fs.unlinkSync(imagePath);
+          }
+        }
+        // If the original was a photo but we only have text now
+        else if (callbackQuery.message.photo && imagePaths.length === 0 && text) {
+          // Delete the old message and send a new one
+          await bot.deleteMessage(chatId, messageId);
+          const sentMsg = await bot.sendMessage(chatId, text, {
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+            }
+          });
+          messageToConversation[sentMsg.message_id] = conversationId;
+        }
+      } catch (error) {
+        console.error('Error regenerating response:', error);
+        // Since we already answered the callback query, we'll send an error message
+        bot.sendMessage(chatId, "Sorry, I couldn't regenerate the response.", {
+          reply_to_message_id: messageId
+        });
+      }
+    } else {
+      // We've already answered the callback query above, so no need to do it again
+      bot.sendMessage(chatId, "Cannot regenerate this response. The original message is no longer available.");
+    }
+  }
+});
+
 // Listen for photo uploads
 bot.on('photo', async (msg) => {
   const chatId = msg.chat.id;
@@ -222,27 +310,47 @@ bot.on('photo', async (msg) => {
     // Download the photo
     const filePath = await downloadFile(photoId);
     
+    // Use message ID for regeneration
+    const inputId = msg.message_id.toString();
+    
+    // Store the input for potential regeneration
+    messageInputs[inputId] = {
+      prompt: caption,
+      imagePath: filePath,
+      conversationId
+    };
+    
     // Generate AI response with image
     const { text, imagePaths, conversationId: resultConvId } = await generateAIResponse(conversationId, caption, filePath);
     
     // Send the text response
     if (text) {
-      const sentMsg = await bot.sendMessage(chatId, text, { reply_to_message_id: msg.message_id });
+      const sentMsg = await bot.sendMessage(chatId, text, { 
+        reply_to_message_id: msg.message_id,
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+        }
+      });
       // Store this message ID with its conversation
       messageToConversation[sentMsg.message_id] = resultConvId;
     }
     
     // Send any images that were generated
     for (const imagePath of imagePaths) {
-      const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), { reply_to_message_id: msg.message_id });
+      const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), { 
+        reply_to_message_id: msg.message_id,
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+        }
+      });
       // Store this message ID with its conversation
       messageToConversation[sentPhoto.message_id] = resultConvId;
       // Clean up the response image after sending
       fs.unlinkSync(imagePath);
     }
     
-    // Clean up - delete the uploaded file after processing
-    fs.unlinkSync(filePath);
+    // Don't delete the uploaded file yet since we might need it for regeneration
+    // We'll clean it up when we no longer need it (e.g., after some time)
   } catch (error) {
     console.error('Error processing photo:', error);
     bot.sendMessage(chatId, "Sorry, I couldn't process that image.", { reply_to_message_id: msg.message_id });
@@ -268,19 +376,39 @@ bot.on('message', async (msg) => {
     bot.sendChatAction(chatId, 'typing');
     
     try {
+      // Use message ID for regeneration
+      const inputId = msg.message_id.toString();
+      
+      // Store the input for potential regeneration
+      messageInputs[inputId] = {
+        prompt: msg.text,
+        imagePath: null,
+        conversationId
+      };
+      
       // Generate AI response
       const { text, imagePaths, conversationId: resultConvId } = await generateAIResponse(conversationId, msg.text);
       
       // Send the text response
       if (text) {
-        const sentMsg = await bot.sendMessage(chatId, text, { reply_to_message_id: msg.message_id });
+        const sentMsg = await bot.sendMessage(chatId, text, { 
+          reply_to_message_id: msg.message_id,
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+          }
+        });
         // Store this message ID with its conversation
         messageToConversation[sentMsg.message_id] = resultConvId;
       }
       
       // Send any images that were generated
       for (const imagePath of imagePaths) {
-        const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), { reply_to_message_id: msg.message_id });
+        const sentPhoto = await bot.sendPhoto(chatId, fs.createReadStream(imagePath), { 
+          reply_to_message_id: msg.message_id,
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔄 Regenerate', callback_data: `regenerate_${inputId}` }]]
+          }
+        });
         // Store this message ID with its conversation
         messageToConversation[sentPhoto.message_id] = resultConvId;
         // Clean up the response image after sending
@@ -292,5 +420,38 @@ bot.on('message', async (msg) => {
     }
   }
 });
+
+// Clean up old stored inputs and images periodically (every hour)
+setInterval(() => {
+  const oneHourAgo = Date.now() - (60 * 60 * 1000);
+  
+  // Clean up old messageInputs entries
+  // Now we need to use a different method since we're using message IDs instead of timestamps
+  // We'll check the creation time of the image files instead
+  Object.keys(messageInputs).forEach(inputId => {
+    const entry = messageInputs[inputId];
+    if (entry.imagePath && fs.existsSync(entry.imagePath)) {
+      try {
+        const stats = fs.statSync(entry.imagePath);
+        // If the file is older than an hour
+        if (stats.birthtimeMs < oneHourAgo) {
+          fs.unlinkSync(entry.imagePath);
+          delete messageInputs[inputId];
+        }
+      } catch (err) {
+        console.error('Error checking/deleting old file:', err);
+        // If there's an error, still try to delete the entry
+        delete messageInputs[inputId];
+      }
+    } else if (!entry.imagePath) {
+      // For text-only entries, keep them for a day (since they don't use disk space)
+      // This logic can be adjusted as needed
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+      if (parseInt(entry.conversationId.split('_')[1]) < oneDayAgo) {
+        delete messageInputs[inputId];
+      }
+    }
+  });
+}, 60 * 60 * 1000); // Run every hour
 
 console.log('Bot is running with full AI integration using experimental model and conversation threading...'); 
